@@ -1,4 +1,8 @@
-"""素材管理接口：维护拍摄素材，覆盖提交转码、确认归档、登记丢失等动作。"""
+"""素材管理接口：维护拍摄素材，覆盖提交转码、确认归档、登记丢失等动作。
+
+列表、动作、导出只做参数转换，规则统一取自 services.footage，
+新增素材类型或状态时不需要在接口层再改一遍。
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -6,20 +10,30 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas import ActionResult, EntryPayload, PageResult
+from app.services import footage as rules
 from app.services.footage import FootageService
 
 router = APIRouter(prefix="/api/footage", tags=["素材管理"])
 
 service = FootageService()
 
-LIST_FIELDS = ["素材编号", "素材类型", "拍摄日期", "文件大小", "存储介质", "转码格式", "备份位置", "素材状态"]
-STATUSES = ["待转码", "转码中", "已归档", "已丢失"]
+
+@router.get("/meta", response_model=dict)
+def describe_rules() -> dict[str, Any]:
+    """输出素材管理共用规则：列、动作、状态，页面据此渲染，避免与归档逻辑脱节。"""
+    return service.describe_rules()
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出素材管理清单：返回当前过滤条件下的全量数据。"""
+    return service.export_entries()
 
 
 @router.get("", response_model=PageResult[dict])
 def list_entries(
-    keyword: str | None = Query(default=None, description="按素材编号检索"),
-    status: str | None = Query(default=None, description="待转码、转码中、已归档、已丢失"),
+    keyword: str | None = Query(default=None, description=f"按{rules.KEYWORD_FIELD}检索"),
+    status: str | None = Query(default=None, description="、".join(rules.STATUS_ORDER)),
     page: int = 1,
     size: int = 20,
 ) -> PageResult[dict]:
@@ -35,7 +49,7 @@ def get_entry(entry_id: int) -> dict:
     """读取单条拍摄素材明细；不存在时给出可读的错误说明。"""
     entry = service.get_entry(entry_id)
     if entry is None:
-        raise HTTPException(status_code=404, detail=f"拍摄素材 {entry_id} 不存在或已归档")
+        raise HTTPException(status_code=404, detail=f"{rules.ENTITY} {entry_id} 不存在或已归档")
     return entry
 
 
@@ -45,7 +59,7 @@ def create_entry(payload: EntryPayload) -> ActionResult:
     entry, missing = service.create_entry(payload.values)
     if missing:
         return ActionResult(ok=False, message=f"缺少必填字段：{'、'.join(missing)}")
-    return ActionResult(ok=True, message="拍摄素材已登记", entry=entry)
+    return ActionResult(ok=True, message=f"{rules.ENTITY}已登记", entry=entry)
 
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)
@@ -56,10 +70,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出素材管理清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "footage", "total": total, "items": items}

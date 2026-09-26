@@ -63,23 +63,29 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { request } from '@/api/client'
 
 type Row = Record<string, string | number | null>
 
+interface FootageRules {
+  columns: string[]
+  actions: string[]
+  statuses: string[]
+}
+
 const ENDPOINT = '/api/footage'
-const columns = ["素材编号", "素材类型", "拍摄日期", "文件大小", "存储介质", "转码格式", "备份位置", "素材状态"]
-const actions = ["提交转码", "确认归档", "登记丢失"]
-const statuses = ["待转码", "转码中", "已归档", "已丢失"]
+const columns = ref<string[]>([])
+const actions = ref<string[]>([])
+const statuses = ref<string[]>([])
 const stats = [{"label": "待转码素材", "value": 0}, {"label": "已归档素材", "value": 0}, {"label": "存储占用", "value": 0}]
 
 const rows = ref<Row[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
-const filterFields = columns.slice(0, 3)
+const filterFields = computed(() => columns.value.slice(0, 3))
 
 function resetFilters() {
   filters.value = {}
@@ -110,6 +116,21 @@ async function runAction(action: string, row: Row) {
   }
 }
 
+async function loadRules() {
+  try {
+    const response = await request(`${ENDPOINT}/meta`)
+    if (!response.ok) {
+      throw new Error('素材管理规则读取失败')
+    }
+    const rules = (await response.json()) as FootageRules
+    columns.value = rules.columns ?? []
+    actions.value = rules.actions ?? []
+    statuses.value = rules.statuses ?? []
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '素材管理规则读取失败'
+  }
+}
+
 async function reload() {
   errorMessage.value = ''
   const query = new URLSearchParams(filters.value as Record<string, string>).toString()
@@ -126,5 +147,8 @@ async function reload() {
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  void loadRules()
+  void reload()
+})
 </script>
