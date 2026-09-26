@@ -1,4 +1,8 @@
-"""素材管理业务规则：状态流转、字段校验与筛选口径都收在这里。"""
+"""素材管理业务规则：状态流转、字段校验与筛选口径都收在这里。
+
+列表、归档操作、下载共用这一份规则：新增素材类型或调整状态序列时只改这里，
+路由与页面都从这份规则取数，不再各自维护一份拷贝。
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -6,6 +10,7 @@ from typing import Any
 from app.store import store
 
 MODULE = "footage"
+LIST_FIELDS = ["素材编号", "素材类型", "拍摄日期", "文件大小", "存储介质", "转码格式", "备份位置", "素材状态"]
 REQUIRED_FIELDS = ["素材编号", "素材类型", "拍摄日期"]
 STATUS_ORDER = ["待转码", "转码中", "已归档", "已丢失"]
 ACTION_RULES = {"提交转码": "转码中", "确认归档": "已归档", "登记丢失": "已丢失"}
@@ -13,6 +18,20 @@ NEGATIVE_ACTIONS = []
 
 
 class FootageService:
+    def query_entries(
+        self,
+        *,
+        keyword: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """列表与下载共用的筛选口径：素材编号关键字 + 状态，只在这一处判断。"""
+        rows = store.rows(MODULE)
+        if keyword:
+            rows = [row for row in rows if keyword in str(row.get("素材编号", ""))]
+        if status:
+            rows = [row for row in rows if row.get("status") == status]
+        return rows
+
     def list_entries(
         self,
         *,
@@ -21,14 +40,20 @@ class FootageService:
         page: int = 1,
         size: int = 20,
     ) -> tuple[list[dict[str, Any]], int]:
-        rows = store.rows(MODULE)
-        if keyword:
-            rows = [row for row in rows if keyword in str(row.get("素材编号", ""))]
-        if status:
-            rows = [row for row in rows if row.get("status") == status]
+        rows = self.query_entries(keyword=keyword, status=status)
         total = len(rows)
         start = max(page - 1, 0) * size
         return rows[start:start + size], total
+
+    def export_entries(
+        self,
+        *,
+        keyword: str | None = None,
+        status: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """下载与列表走同一份筛选口径，只是不分页、一次取全量。"""
+        items = self.query_entries(keyword=keyword, status=status)
+        return items, len(items)
 
     def get_entry(self, entry_id: int) -> dict[str, Any] | None:
         return store.find(MODULE, entry_id)

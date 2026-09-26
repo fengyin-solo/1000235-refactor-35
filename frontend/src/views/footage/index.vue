@@ -12,7 +12,7 @@
     </header>
 
     <div class="stat-row">
-      <article v-for="item in stats" :key="item.label" class="stat-card">
+      <article v-for="item in page.stats" :key="item.label" class="stat-card">
         <span class="stat-label">{{ item.label }}</span>
         <strong class="stat-value">{{ item.value }}</strong>
       </article>
@@ -30,16 +30,16 @@
     <table class="data-table">
       <thead>
         <tr>
-          <th v-for="column in columns" :key="column">{{ column }}</th>
+          <th v-for="column in page.columns" :key="column">{{ column }}</th>
           <th>可执行动作</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in page.columns" :key="column">{{ row[column] ?? '—' }}</td>
           <td class="row-actions">
             <button
-              v-for="action in actions"
+              v-for="action in page.actions"
               :key="action"
               class="link"
               type="button"
@@ -50,7 +50,7 @@
           </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="columns.length + 1" class="empty-state">暂无素材管理数据，可先登记拍摄素材</td>
+          <td :colspan="page.columns.length + 1" class="empty-state">暂无素材管理数据，可先登记拍摄素材</td>
         </tr>
       </tbody>
     </table>
@@ -69,17 +69,29 @@ import { request } from '@/api/client'
 
 type Row = Record<string, string | number | null>
 
-const ENDPOINT = '/api/footage'
-const columns = ["素材编号", "素材类型", "拍摄日期", "文件大小", "存储介质", "转码格式", "备份位置", "素材状态"]
-const actions = ["提交转码", "确认归档", "登记丢失"]
-const statuses = ["待转码", "转码中", "已归档", "已丢失"]
-const stats = [{"label": "待转码素材", "value": 0}, {"label": "已归档素材", "value": 0}, {"label": "存储占用", "value": 0}]
+/** 拍摄素材的共用规则：列口径、可执行动作、统计卡只维护这一份，新增素材类型时改这里即可。 */
+const page = {
+  endpoint: '/api/footage',
+  columns: ["素材编号", "素材类型", "拍摄日期", "文件大小", "存储介质", "转码格式", "备份位置", "素材状态"],
+  actions: ["提交转码", "确认归档", "登记丢失"],
+  stats: [{"label": "待转码素材", "value": 0}, {"label": "已归档素材", "value": 0}, {"label": "存储占用", "value": 0}],
+}
 
 const rows = ref<Row[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
-const filterFields = columns.slice(0, 3)
+const filterFields = page.columns.slice(0, 3)
+
+/** 列表、归档操作、下载共用同一套执行口径：先清掉旧错误，失败时留下一句可读的说明。 */
+async function runSafely(work: () => Promise<void>, fallback: string) {
+  errorMessage.value = ''
+  try {
+    await work()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : fallback
+  }
+}
 
 function resetFilters() {
   filters.value = {}
@@ -87,7 +99,7 @@ function resetFilters() {
 }
 
 function exportRows() {
-  window.open(`${ENDPOINT}/export`, '_blank')
+  window.open(`${page.endpoint}/export`, '_blank')
 }
 
 function openCreate() {
@@ -95,9 +107,8 @@ function openCreate() {
 }
 
 async function runAction(action: string, row: Row) {
-  errorMessage.value = ''
-  try {
-    const response = await request(`${ENDPOINT}/${row.id}/actions`, {
+  await runSafely(async () => {
+    const response = await request(`${page.endpoint}/${row.id}/actions`, {
       method: 'POST',
       body: JSON.stringify({ action }),
     })
@@ -105,25 +116,20 @@ async function runAction(action: string, row: Row) {
       throw new Error('素材管理动作未生效，请稍后重试')
     }
     await reload()
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '素材管理操作失败'
-  }
+  }, '素材管理操作失败')
 }
 
 async function reload() {
-  errorMessage.value = ''
   const query = new URLSearchParams(filters.value as Record<string, string>).toString()
-  try {
-    const response = await request(`${ENDPOINT}?${query}`)
+  await runSafely(async () => {
+    const response = await request(`${page.endpoint}?${query}`)
     if (!response.ok) {
       throw new Error('拍摄素材列表读取失败')
     }
     const payload = await response.json()
     rows.value = payload.items ?? []
     total.value = payload.total ?? rows.value.length
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '素材管理列表读取失败'
-  }
+  }, '素材管理列表读取失败')
 }
 
 onMounted(reload)

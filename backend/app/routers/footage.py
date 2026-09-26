@@ -1,4 +1,7 @@
-"""素材管理接口：维护拍摄素材，覆盖提交转码、确认归档、登记丢失等动作。"""
+"""素材管理接口：维护拍摄素材，覆盖提交转码、确认归档、登记丢失等动作。
+
+路由本身不再重复定义状态序列与列口径，统一从 app.services.footage 的规则取数。
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -6,20 +9,17 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas import ActionResult, EntryPayload, PageResult
-from app.services.footage import FootageService
+from app.services.footage import MODULE, STATUS_ORDER, FootageService
 
 router = APIRouter(prefix="/api/footage", tags=["素材管理"])
 
 service = FootageService()
 
-LIST_FIELDS = ["素材编号", "素材类型", "拍摄日期", "文件大小", "存储介质", "转码格式", "备份位置", "素材状态"]
-STATUSES = ["待转码", "转码中", "已归档", "已丢失"]
-
 
 @router.get("", response_model=PageResult[dict])
 def list_entries(
     keyword: str | None = Query(default=None, description="按素材编号检索"),
-    status: str | None = Query(default=None, description="待转码、转码中、已归档、已丢失"),
+    status: str | None = Query(default=None, description="、".join(STATUS_ORDER)),
     page: int = 1,
     size: int = 20,
 ) -> PageResult[dict]:
@@ -28,6 +28,13 @@ def list_entries(
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出素材管理清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.export_entries()
+    return {"module": MODULE, "total": total, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -56,10 +63,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出素材管理清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "footage", "total": total, "items": items}
